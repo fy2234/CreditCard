@@ -1,5 +1,5 @@
 # Credit card default prediction 
-The dataset that I am going to analyze is about credit risk. The dataset is found from UCL Machine Learning Repository. This dataset has 30,000 records and 24 variables. 
+The dataset that I am going to analyze is about credit risk. The dataset is found on UCL Machine Learning Repository website. This dataset has 30,000 records and 24 variables. 
 
 X1 is the amount of the given credit of both the individual and his/her family.
 
