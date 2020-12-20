@@ -1,0 +1,805 @@
+---
+title: "project code"
+author: "Feifei Yan"
+date: "11/17/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+# Part 1: Load data, import libraries and initial review 
+```{r warning=FALSE, message=FALSE}
+# load data
+credit_df <-read.csv("/Users/apple/Desktop/Study/Data mining/Project/creditcard.csv", header= TRUE) 
+attach(credit_df)
+```
+
+```{r message=FALSE, warning=FALSE}
+# import libraries
+library("ggplot2")
+library("caret")
+library("ggpubr")
+library("reshape2")
+library("e1071")
+library("mlr")    
+library("xgboost")
+library("randomForest")
+library("rpart")
+library("ROCR")
+library("parallelMap")
+library("parallel")
+library("pROC")
+library("dplyr")
+```
+
+```{r}
+# check column names
+names(credit_df)
+```
+
+```{r}
+# check structure
+str(credit_df)
+```
+
+
+```{r}
+# check dimension 
+dim(credit_df)
+```
+
+
+```{r}
+# check summary statistics  
+summary(credit_df)
+```
+
+```{r}
+# check first few lines of data 
+head(credit_df)
+```
+
+
+```{r}
+# check last few lines of data 
+tail(credit_df)
+```
+
+# Part 2: Data pre-processing 
+```{r}
+# check the distribution of education 
+as.data.frame(table(EDUCATION))
+```
+
+```{r}
+# check the distribution of marriage 
+as.data.frame(table(MARRIAGE))
+```
+
+```{r}
+# check the distribution of payment status 
+sapply(X = credit_df[c(6,7,8,9,10,11)],FUN = table)
+```
+
+
+```{r}
+# grouping unknown values to others
+credit_df$EDUCATION[credit_df$EDUCATION == 0| credit_df$EDUCATION == 5 |credit_df$EDUCATION == 6] <- 4
+credit_df$MARRIAGE[credit_df$MARRIAGE == 0] <- 3
+```
+
+
+```{r}
+# create new features to reduce redundancy 
+# number of missed payment 
+credit_df = mutate(credit_df, missing_payment = rowSums(credit_df[6:11] > 0))
+# average of bill amount
+credit_df = mutate(credit_df, avg_bill = apply(credit_df[,c(12:17)],1,mean))
+# average of payment amount 
+credit_df = mutate(credit_df, avg_payment = apply(credit_df[,c(18:23)],1,mean))
+# utilization ratio
+credit_df= mutate(credit_df, utilization_ratio = avg_bill/LIMIT_BAL)
+```
+
+```{r}
+# drop original features to avoid multicollinearity 
+credit_df=credit_df[c(1,2,3,4,5,25,26,27,28,24)]
+head(credit_df)
+```
+
+```{r}
+# change labels for visualization 
+credit_df$SEX[credit_df$SEX==1] <- "male"
+credit_df$SEX[credit_df$SEX==2] <- "female"
+credit_df$EDUCATION[credit_df$EDUCATION==1] <- "graduate school"
+credit_df$EDUCATION[credit_df$EDUCATION==2] <- "university"
+credit_df$EDUCATION[credit_df$EDUCATION==3] <- "high school"
+credit_df$EDUCATION[credit_df$EDUCATION==4] <- "others"
+credit_df$MARRIAGE[credit_df$MARRIAGE==1] <- "married"
+credit_df$MARRIAGE[credit_df$MARRIAGE==2] <- "single"
+credit_df$MARRIAGE[credit_df$MARRIAGE==3] <- "others"
+```
+
+
+```{r}
+# binning age for visulization 
+credit_df$AGE[20<credit_df$AGE & credit_df$AGE<=40] <- "young"
+credit_df$AGE[40<credit_df$AGE & credit_df$AGE<=60] <- "middle"
+credit_df$AGE[40<credit_df$AGE & credit_df$AGE<=80] <- "old"
+```
+
+
+```{r}
+# check the first few lines 
+head(credit_df)
+```
+
+# Part 3: Exploratory data analysis 
+
+```{r warning=FALSE,message= FALSE}
+# check summary statistics
+summary(credit_df)
+attach(credit_df)
+```
+
+```{r}
+# check dimension 
+dim(credit_df)
+```
+
+
+```{r}
+# check for missing value 
+sum(is.na(credit_df))
+```
+
+```{r}
+# detect outliers for continuous variables 
+a<-ggplot(credit_df, aes((LIMIT_BAL))) + 
+  geom_boxplot()+
+  xlab("credit line") 
+b<-ggplot(credit_df, aes( (avg_bill))) + 
+  geom_boxplot() +
+  xlab("average bill amount") 
+c<-ggplot(credit_df, aes((avg_payment))) + 
+  geom_boxplot() +
+  xlab("averaage payment amount") 
+d<-ggplot(credit_df, aes((utilization_ratio))) + 
+  geom_boxplot() +
+  xlab("utilization ratio") 
+ggarrange(a,b,c,d,ncol = 2, nrow = 2)
+```
+
+```{r}
+# check the distribution of the target variable 
+ggplot(credit_df, aes(x=factor(default)))+
+  geom_bar(stat="count", width=0.7, fill="skyblue")+
+  theme_minimal()+
+  geom_text(stat='count', aes(label=..count..),vjust= 0)+
+  xlab("Default status") + 
+  ylab("Count of default")+                
+  ggtitle("Distribution of default")+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r warning=FALSE, message=FALSE}
+# Understanding relationships and new insights through plots
+a<-ggplot(credit_df, aes(factor(default), (LIMIT_BAL))) + 
+  geom_boxplot(fill="lightblue") +
+  xlab("Default Status") + 
+  ylab("Credit line") +
+  ggtitle("Distribution of credit line")+
+  theme(plot.title = element_text(hjust = 0.5))
+b<-ggplot(credit_df, aes(factor(default), (avg_bill))) + 
+  geom_boxplot(fill="lightblue") +
+  xlab("Default Status") + 
+  ylab("Average bill") +
+  ylim(0, 400000)+
+  ggtitle("Distribution of average bill")+
+  theme(plot.title = element_text(hjust = 0.5))
+c<-ggplot(credit_df, aes(factor(default), (avg_payment))) + 
+  geom_boxplot(fill="lightblue") +
+  xlab("Default Status") + 
+  ylab("Average payment amount") +
+  ylim(0, 20000)+
+  ggtitle("Distribution of payment amount")+
+  theme(plot.title = element_text(hjust = 0.5))
+d<-ggplot(credit_df, aes(factor(default), (utilization_ratio))) + 
+  geom_boxplot(fill="lightblue") +
+  xlab("Default status") + 
+  ylab("Utilization ratio") +
+  ggtitle("Distribution of utilization ratio")+
+  theme(plot.title = element_text(hjust = 0.5))
+ggarrange(a,b,c,d,ncol = 2, nrow = 2)
+```
+
+```{r}
+# Sex
+ggplot(credit_df %>% count(default, SEX) %>%    
+         group_by(SEX) %>% mutate(pct=n/sum(n)),              
+       aes(SEX, n, fill=factor(default))) +
+  geom_bar(stat="identity") +
+  geom_text(aes(label=paste0(sprintf("%1.1f", pct*100),"%")), 
+            position = position_dodge(width = 1))+
+  xlab("Sex") + 
+  ylab("Count")+                
+  ggtitle("Distribution of gender by default")+
+  theme(plot.title = element_text(hjust = 0.5))+
+   theme(axis.text.x = element_text(size = 12))
+```
+
+
+```{r}
+# Marriage
+ggplot(credit_df %>% count(default, MARRIAGE) %>%    
+         group_by(MARRIAGE) %>% mutate(pct=n/sum(n)),              
+       aes(MARRIAGE, n, fill=factor(default))) +
+  geom_bar(stat="identity") +
+  geom_text(aes(label=paste0(sprintf("%1.1f", pct*100),"%")), 
+            position = position_dodge(width = 1))+
+  xlab("Marriage status") + 
+  ylab("Count")+                
+  ggtitle("Distribution of marriage status by default")+
+  theme(plot.title = element_text(hjust = 0.5))+
+    theme(axis.text.x = element_text(size = 12))
+```
+
+
+```{r}
+#Education
+ggplot(credit_df %>% count(default, EDUCATION) %>%    
+         group_by(EDUCATION) %>% mutate(pct=n/sum(n)),              
+       aes(EDUCATION, n, fill=factor(default))) +
+  geom_bar(stat="identity") +
+  geom_text(aes(label=paste0(sprintf("%1.1f", pct*100),"%")),position = position_dodge(width = 1))+
+  xlab("Education") + 
+  ylab("Count")+                
+  ggtitle("Distribution of education by default")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(axis.text.x = element_text(size = 12))
+```
+
+
+```{r}
+# Age
+ggplot(credit_df %>% count(default, AGE) %>%    
+         group_by(AGE) %>% mutate(pct=n/sum(n)),              
+       aes(AGE, n, fill=factor(default))) +
+  geom_bar(stat="identity") +
+  geom_text(aes(label=paste0(sprintf("%1.1f", pct*100),"%")), 
+            position = position_dodge(width = 1))+
+  xlab("AGE") + 
+  ylab("Count")+                
+  ggtitle("Distribution of age by default")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(axis.text.x = element_text(size = 12))
+```
+
+
+```{r}
+# missing payment
+ggplot(credit_df, aes(x=factor(missing_payment), fill=factor(default)))+
+  geom_bar(stat="count", position="dodge", width=0.7)+
+  theme_minimal()+
+  geom_text(stat='count', aes(label=..count..),position = position_dodge(width = 1),vjust=0)+
+  xlab("Missing payment") + 
+  ylab("Count")+                
+  ggtitle("Distribution of missing payment by default")+
+  theme(plot.title = element_text(hjust = 0.5))+
+    theme(axis.text.x = element_text(size = 12))
+```
+
+```{r}
+# Sex vs Age vs Credit line
+ggplot(credit_df, aes(factor(SEX), (LIMIT_BAL/1000), fill=AGE)) + 
+  geom_boxplot() +
+  xlab("Sex") + 
+  ylab("Credit line") +
+  ggtitle("Sex vs Age vs Credit line")+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+# Education vs Martial status vs Credit line
+ggplot(credit_df, aes(factor(MARRIAGE), (LIMIT_BAL/1000), fill=EDUCATION)) + 
+  geom_boxplot() +
+  xlab("Marital Status") + 
+  ylab("Given credit")+
+  ggtitle("Education vs Martial status vs Credit line")+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+# Part 4: Data preparation 
+
+```{r}
+# label encoding for ordinal variables
+credit_df$EDUCATION[credit_df$EDUCATION=="others"] <- 0
+credit_df$EDUCATION[credit_df$EDUCATION=="high school"] <- 1
+credit_df$EDUCATION[credit_df$EDUCATION=="university"] <- 2
+credit_df$EDUCATION[credit_df$EDUCATION=="graduate school"] <- 3
+credit_df$AGE[credit_df$AGE=="young"] <- 0
+credit_df$AGE[credit_df$AGE=="middle"] <- 1
+credit_df$AGE[credit_df$AGE=="old"] <-2
+credit_df$EDUCATION=as.integer(credit_df$EDUCATION)
+credit_df$AGE=as.integer(credit_df$AGE)
+```
+
+```{r}
+head(credit_df)
+```
+
+```{r}
+# One hot encoding for categorical variables that do not have a natural rank ordering
+dummy <- dummyVars(" ~ .", data=credit_df)
+credit_encode <- data.frame(predict(dummy, newdata = credit_df))
+head(credit_encode) 
+```
+
+```{r}
+# Scaling
+credit_encode[c(1,9,10,11,12)] <- lapply(credit_encode[c(1,9,10,11,12)], function(x) c(scale(x)))
+head(credit_encode)
+```
+
+```{r}
+tail(credit_encode)
+```
+
+```{r}
+# multicollinearity 
+corr_matrix <- round(cor(credit_encode),2) 
+melted_cormat <- melt(corr_matrix)
+ggplot(data = melted_cormat, aes(x=Var1, y=Var2, fill=value)) + 
+  geom_tile(color = "white")+
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+   midpoint = 0, limit = c(-1,1), space = "Lab", 
+  name="Pearson\nCorrelation") +
+  theme_minimal()+ 
+  theme(axis.text.x = element_text(angle = 90, vjust = 1, 
+    size = 8, hjust = 1))+
+ coord_fixed()
+```
+
+
+```{r}
+# reduce dimensions
+prComp <- prcomp(credit_encode[,-13], center = TRUE,scale. = TRUE)
+```
+
+```{r}
+# get summary of the result
+summary(prComp)
+```
+
+```{r}
+# create the new dataset  
+credit_processed<-data.frame(prComp$x[,1:10],default = credit_encode$default)
+dim(credit_processed)
+```
+
+
+```{r}
+# split data into 80% for training and 20% for testing 
+set.seed(0)
+train=sample(nrow(credit_processed),nrow(credit_processed)*0.8)
+credit_train=credit_processed[train,]
+credit_test=credit_processed[-train,]
+default_test=credit_processed$default[-train]
+```
+
+
+```{r}
+# convert target variable to factor and create tasks 
+credit_train$default <- as.factor(credit_train$default)
+credit_test$default <- as.factor(credit_test$default)
+trainTask <- makeClassifTask(data = credit_train, target = "default")
+testTask <- makeClassifTask(data = credit_test, target = "default")
+```
+
+```{r}
+# oversampling and undersampling  
+train_under <- undersample(trainTask,rate = 0.3) # keep only 50% of majority class
+train_over <- oversample(trainTask,rate=3) ### making minority class 3 times
+```
+
+# Part 5: Model development 
+
+```{r}
+# Random Forest 
+set.seed(0)
+rf_leaner <- makeLearner("classif.randomForest",predict.type = "response")
+rf_leaner$par.vals <- list(ntree = 100,importance=TRUE)
+rf_param <- makeParamSet(
+        makeIntegerParam("mtry",lower = 2,upper = 10),
+        makeIntegerParam("nodesize",lower = 10,upper = 50)
+)
+rdesc <- makeResampleDesc("CV",iters=5,stratify=TRUE)
+ctrl <- makeTuneControlRandom(maxit = 5)
+```
+
+```{r}
+parallelStartSocket(cpus = detectCores())
+rf_tune <- tuneParams(learner = rf_leaner
+                   ,task = trainTask
+                   ,resampling = rdesc
+                   ,measures = list(acc,tpr,tnr,fpr,fnr)
+                   ,par.set = rf_param
+                   ,control = ctrl
+                   ,show.info = T)
+
+rf_tuned_learner <- setHyperPars(
+  learner = rf_leaner,
+  par.vals = rf_tune$x
+)
+rf_model <- train(rf_tuned_learner, trainTask)
+```
+
+```{r}
+parallelStop()
+```
+
+
+```{r}
+# Confusion matrix 
+predict_rf = predict(rf_model, testTask)
+rf_prediction = predict_rf$data$response
+dt_table <- table(rf_prediction,default_test)
+accuracy <- (sum(diag(dt_table)) / sum(dt_table))
+precision <- mean(diag(dt_table) / rowSums(dt_table))
+recall <- mean((diag(dt_table) / colSums(dt_table)))
+FScore <- mean((2*precision*recall)/(precision+recall))
+accuracy
+precision
+recall
+FScore
+```
+
+
+```{r}
+# undersampling 
+set.seed(0)
+rf_model_u  =  train(rf_tuned_learner, train_under)
+predict_rf_u = predict(rf_model_u, testTask)
+time<-system.time(predict_rf_u <- predict(rf_model_u, testTask))
+rf_prediction_u = predict_rf_u$data$response
+dt_table <- table(rf_prediction_u,default_test)
+accuracy <- (sum(diag(dt_table)) / sum(dt_table))
+precision <- mean(diag(dt_table) / rowSums(dt_table))
+recall <- mean((diag(dt_table) / colSums(dt_table)))
+FScore <- mean((2*precision*recall)/(precision+recall))
+accuracy
+precision
+recall
+FScore
+time[3]
+```
+
+```{r}
+# oversampling
+set.seed(0)
+rf_model_o  =  train(rf_tuned_learner, train_over)
+predict_rf_o = predict(rf_model_o, testTask)
+rf_prediction_o = predict_rf_o$data$response
+dt_table <- table(rf_prediction_o,default_test)
+accuracy <- (sum(diag(dt_table)) / sum(dt_table))
+precision <- mean(diag(dt_table) / rowSums(dt_table))
+recall <- mean((diag(dt_table) / colSums(dt_table)))
+FScore <- mean((2*precision*recall)/(precision+recall))
+accuracy
+precision
+recall
+FScore
+```
+
+
+```{r}
+# XGBOOST 
+set.seed(1)
+xgb_learner  =  makeLearner("classif.xgboost",predict.type = "response")
+xgb_params <- makeParamSet(
+  makeIntegerParam("max_depth", lower = 3, upper = 10),
+  makeNumericParam("eta", lower = .01, upper = .5),
+  makeNumericParam("lambda", lower = .05, upper = 0.5),
+  makeNumericParam("min_child_weight",lower=2,upper=10),
+  makeNumericParam("colsample_bytree",lower = .50,upper = .8),
+  makeNumericParam("subsample", lower = .50, upper = 1),
+  makeIntegerParam("nrounds", lower = 100, upper = 200)
+)
+control <- makeTuneControlRandom(maxit = 5)
+resample_desc <- makeResampleDesc("CV", iters = 5, stratify=TRUE)
+```
+
+```{r}
+parallelStartSocket(cpus = detectCores())
+tuned_params <- tuneParams(
+  learner = xgb_learner,
+  task = trainTask,
+  resampling = resample_desc,
+  par.set = xgb_params,
+  control = control,
+  measures = list(acc,tpr,tnr,fpr,fnr),
+)
+xgb_tuned_learner <- setHyperPars(
+  learner = xgb_learner,
+  par.vals = tuned_params$x
+)
+xgb_model <- train(xgb_tuned_learner, trainTask)
+```
+
+```{r}
+parallelStop()
+```
+
+```{r}
+# Confusion matrix 
+predict_xg = predict(xgb_model, testTask)
+xg_prediction = predict_xg$data$response
+dt_table <- table(xg_prediction,default_test)
+accuracy <- (sum(diag(dt_table)) / sum(dt_table))
+precision <- mean(diag(dt_table) / rowSums(dt_table))
+recall <- mean((diag(dt_table) / colSums(dt_table)))
+FScore <- mean((2*precision*recall)/(precision+recall))
+accuracy
+precision
+recall
+FScore
+```
+
+
+```{r}
+# undersampling
+set.seed(1)
+xgb_model_u  =  train(xgb_tuned_learner, train_under)
+predict_xg_u = predict(xgb_model_u, testTask)
+xgb_prediction_u = predict_xg_u$data$response
+dt_table <- table(xgb_prediction_u,default_test)
+accuracy <- (sum(diag(dt_table)) / sum(dt_table))
+precision <- mean(diag(dt_table) / rowSums(dt_table))
+recall <- mean((diag(dt_table) / colSums(dt_table)))
+FScore <- mean((2*precision*recall)/(precision+recall))
+accuracy
+precision
+recall
+FScore
+```
+
+```{r}
+# oversampling 
+set.seed(1)
+xgb_model_o  <-  train(xgb_tuned_learner, train_over)
+predict_xg_o <- predict(xgb_model_o, testTask)
+time<-system.time(predict_x_o<- predict(xgb_model_o, testTask))
+xgb_prediction_o <- predict_xg_o$data$response
+dt_table <- table(xgb_prediction_o,default_test)
+accuracy <- (sum(diag(dt_table)) / sum(dt_table))
+precision <- mean(diag(dt_table) / rowSums(dt_table))
+recall <- mean((diag(dt_table) / colSums(dt_table)))
+FScore <- mean((2*precision*recall)/(precision+recall))
+accuracy
+precision
+recall
+FScore
+time[3]
+```
+
+
+```{r}
+# Naive Bayes
+set.seed(0)
+naive_learner <- makeLearner("classif.naiveBayes",predict.type = "response")
+folds <- makeResampleDesc("CV",iters=5,stratify = TRUE)
+naive_learner$par.vals <- list(laplace = 1)
+ fun_cv <- function(a){
+  crv_val <- resample(naive_learner,a,folds,measures = list(acc,tpr,tnr,fpr,fnr))
+  crv_val$aggr
+ }
+nb_model  =  train(naive_learner, trainTask)
+```
+
+```{r}
+# Confusion matrix
+nb_predict <- predict(nb_model,testTask)
+nb_prediction = nb_predict$data$response
+dt_table <- table(nb_prediction,default_test)
+accuracy <- (sum(diag(dt_table)) / sum(dt_table))
+precision <- mean(diag(dt_table) / rowSums(dt_table))
+recall <- mean((diag(dt_table) / colSums(dt_table)))
+FScore <- mean((2*precision*recall)/(precision+recall))
+accuracy
+precision
+recall
+FScore
+```
+
+
+
+```{r}
+# undersampling
+set.seed(0)
+nb_model_u  <- train(naive_learner, train_under)
+nb_predict_u = predict(nb_model_u,testTask)
+ time<-system.time(nb_predict_u <- predict(nb_model_u,testTask))
+nb_prediction_u = nb_predict_u$data$response
+dt_table <- table(nb_prediction_u,default_test)
+accuracy <- (sum(diag(dt_table)) / sum(dt_table))
+precision <- mean(diag(dt_table) / rowSums(dt_table))
+recall <- mean((diag(dt_table) / colSums(dt_table)))
+FScore <- mean((2*precision*recall)/(precision+recall))
+accuracy
+precision
+recall
+FScore
+time[3]
+```
+
+
+```{r}
+# oversampling
+set.seed(0)
+nB_model_o <- train(naive_learner, train_over)
+nb_predict_o = predict(nB_model_o,testTask)
+nb_prediction_o = nb_predict_o$data$response
+dt_table <- table(nb_prediction_o,default_test)
+accuracy <- (sum(diag(dt_table)) / sum(dt_table))
+precision <- mean(diag(dt_table) / rowSums(dt_table))
+recall <- mean((diag(dt_table) / colSums(dt_table)))
+FScore <- mean((2*precision*recall)/(precision+recall))
+accuracy
+precision
+recall
+FScore
+```
+
+
+
+```{r}
+# Logistic regression 
+set.seed(0)
+glm_fit1 <- glm(default ~ ., family = binomial(link = 'logit'), data = credit_processed, subset= train)
+summary(glm_fit1)
+```
+
+
+```{r}
+log_learner <- makeLearner("classif.logreg", predict.type = "response")
+cv_log <- crossval(learner = log_learner,
+                   task = trainTask,
+                   iters = 5,
+                   stratify = TRUE,
+                   measures = list(acc,tpr,tnr,fpr,fnr),
+                   show.info = F)
+log_model <- train(log_learner,trainTask)
+```
+
+
+```{r}
+# Confusion matrix 
+log_predict <- predict(log_model,testTask)
+log_prediction <- log_predict$data$response
+dt_table <- table(log_prediction,default_test)
+accuracy <- (sum(diag(dt_table)) / sum(dt_table))
+precision <- mean(diag(dt_table) / rowSums(dt_table))
+recall <- mean((diag(dt_table) / colSums(dt_table)))
+FScore <- mean((2*precision*recall)/(precision+recall))
+accuracy
+precision
+recall
+FScore
+```
+
+
+```{r}
+# oversampling
+set.seed(0)
+log_model_o  <-  train(log_learner, train_over)
+log_predict_o <- predict(log_model_o,testTask)
+time<- system.time(log_predict_o <- predict(log_model_o,testTask))
+log_prediction_o <- log_predict_o$data$response
+dt_table <- table(log_prediction_o,default_test)
+accuracy <- (sum(diag(dt_table)) / sum(dt_table))
+precision <- mean(diag(dt_table) / rowSums(dt_table))
+recall <- mean((diag(dt_table) / colSums(dt_table)))
+FScore <- mean((2*precision*recall)/(precision+recall))
+accuracy
+precision
+recall
+FScore
+time[3]
+```
+
+
+```{r}
+# undersampling 
+set.seed(0)
+log_model_u  <-  train(log_learner, train_under)
+log_predict_u <- predict(log_model_u,testTask)
+log_prediction_u <- log_predict_u$data$response
+dt_table <- table(log_prediction_u,default_test)
+accuracy <- (sum(diag(dt_table)) / sum(dt_table))
+precision <- mean(diag(dt_table) / rowSums(dt_table))
+recall <- mean((diag(dt_table) / colSums(dt_table)))
+FScore <- mean((2*precision*recall)/(precision+recall))
+accuracy
+precision
+recall
+FScore
+
+```
+
+
+```{r}
+# KNN
+set.seed(0)
+knn_learner  =  makeLearner("classif.knn",predict.type = "response")
+knn_params <- makeParamSet(
+  makeIntegerParam("k", default = 1, lower = 1, upper=20),
+  makeIntegerParam("l", default = 0, lower = 0, upper=20)
+)
+control <- makeTuneControlRandom(maxit = 5)
+resample_desc <- makeResampleDesc("CV", iters = 5, stratify=TRUE)
+tuned_params <- tuneParams(
+  learner = knn_learner,
+  task = trainTask,
+  resampling = resample_desc,
+  par.set = knn_params,
+  control = control,
+  measures = list(acc,tpr,tnr,fpr,fnr),
+)
+knn_tuned_learner <- setHyperPars(
+  learner = knn_learner,
+  par.vals = tuned_params$x
+)
+knn_model <- train(knn_tuned_learner, trainTask)
+```
+
+```{r}
+# Confusion matrix 
+knn_predict <- predict(knn_model,testTask)
+time<-system.time(knn_predict <- predict(knn_model,testTask))
+knn_prediction <- knn_predict$data$response
+dt_table <- table(knn_prediction,default_test)
+accuracy <- (sum(diag(dt_table)) / sum(dt_table))
+precision <- mean(diag(dt_table) / rowSums(dt_table))
+recall <- mean((diag(dt_table) / colSums(dt_table)))
+FScore <- mean((2*precision*recall)/(precision+recall))
+accuracy
+precision
+recall
+FScore
+time[3]
+```
+
+```{r}
+# oversampling
+set.seed(0)
+knn_model_o  =  train(knn_learner, train_over)
+knn_predict_o <- predict(knn_model_o,testTask)
+knn_prediction_o <- knn_predict_o$data$response
+dt_table <- table(knn_prediction_o,default_test)
+accuracy <- (sum(diag(dt_table)) / sum(dt_table))
+precision <- mean(diag(dt_table) / rowSums(dt_table))
+recall <- mean((diag(dt_table) / colSums(dt_table)))
+FScore <- mean((2*precision*recall)/(precision+recall))
+accuracy
+precision
+recall
+FScore
+```
+
+
+```{r}
+# undersampling
+set.seed(0)
+knn_model_u  =  train(knn_learner, train_under)
+knn_predict_u <- predict(knn_model_u,testTask)
+knn_prediction_u <- knn_predict_u$data$response
+dt_table <- table(knn_prediction_u,default_test)
+accuracy <- (sum(diag(dt_table)) / sum(dt_table))
+precision <- mean(diag(dt_table) / rowSums(dt_table))
+recall <- mean((diag(dt_table) / colSums(dt_table)))
+FScore <- mean((2*precision*recall)/(precision+recall))
+accuracy
+precision
+recall
+FScore
+```
+
